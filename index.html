@@ -482,13 +482,14 @@
         
         // Power-up State
         let activePowerUp = null;
+        let hasShield = false;
         let powerUpTimer = 0;
         
         // Power-up Config
         const POWERUP_CONFIG = {
             jetpack: { duration: 5000, color: '#FF6B6B', icon: '🚀', name: 'Jetpack' },
             spring: { duration: 5000, color: '#27AE60', icon: '🐸', name: 'Spring' },
-            shield: { duration: 5000, color: '#3498DB', icon: '🛡️', name: 'Shield' }
+            shield: { duration: null, color: '#3498DB', icon: '🛡️', name: 'Shield' }
         };
 
         // Upgrade Costs
@@ -515,6 +516,7 @@
                 level: level,
                 cameraY: cameraY,
                 activePowerUp: activePowerUp,
+                hasShield: hasShield,
                 powerUpTimer: powerUpTimer,
                 timestamp: Date.now()
             };
@@ -555,18 +557,11 @@
             level = session.level;
             cameraY = session.cameraY;
             activePowerUp = session.activePowerUp;
+            hasShield = session.hasShield || false;
             powerUpTimer = session.powerUpTimer;
             
-            // Show power-up HUD if active
-            if (activePowerUp) {
-                const config = POWERUP_CONFIG[activePowerUp];
-                const badge = document.getElementById('powerupBadge');
-                badge.className = 'powerup-badge powerup-' + activePowerUp;
-                document.getElementById('powerupIcon').textContent = config.icon;
-                document.getElementById('powerupName').textContent = config.name;
-                document.getElementById('powerupHud').classList.remove('hidden');
-                updatePowerUpHUD();
-            }
+            // Show power-up HUD if any power-up is active
+            updatePowerUpHUD();
             
             // Update HUD
             document.getElementById('scoreDisplay').textContent = score;
@@ -725,6 +720,7 @@
             
             // Reset power-ups
             activePowerUp = null;
+            hasShield = false;
             powerUpTimer = 0;
             
             // Apply upgrades
@@ -832,7 +828,7 @@
                 if (player.vy < -12) player.vy = -12;
             } else if (activePowerUp === 'spring') {
                 // Spring: 2x jump power is handled in bounce
-            } else if (activePowerUp === 'shield') {
+            } else if (hasShield) {
                 // Shield: handled in fall death
             }
             
@@ -928,11 +924,10 @@
             
             // Fall death - instant death without shield
             if (player.y > canvas.height + 50) {
-                if (activePowerUp === 'shield') {
-                    // Shield: bounce back up instead of dying
+                if (hasShield) {
+                    // Shield: bounce back up instead of dying, keep the shield
                     player.y = canvas.height - 100;
                     player.vy = -15;
-                    deactivatePowerUp();
                 } else {
                     // No shield = instant death (no lives system for player)
                     gameOver();
@@ -957,6 +952,15 @@
         
         function activatePowerUp(type) {
             const config = POWERUP_CONFIG[type];
+            
+            // Shield is permanent - just set the flag, don't replace current power-up
+            if (type === 'shield') {
+                hasShield = true;
+                updatePowerUpHUD();
+                return;
+            }
+            
+            // For timed power-ups, replace current
             activePowerUp = type;
             powerUpTimer = config.duration;
             
@@ -972,19 +976,40 @@
         function deactivatePowerUp() {
             activePowerUp = null;
             powerUpTimer = 0;
-            
-            // Completely hide the power-up HUD
-            const hud = document.getElementById('powerupHud');
-            hud.classList.add('hidden');
-            document.getElementById('powerupBadge').className = 'powerup-badge';
-            document.getElementById('powerupTimer').textContent = '';
-            document.getElementById('powerupIcon').textContent = '';
-            document.getElementById('powerupName').textContent = '';
+            updatePowerUpHUD();
         }
         
         function updatePowerUpHUD() {
-            const seconds = Math.ceil(powerUpTimer / 1000);
-            document.getElementById('powerupTimer').textContent = seconds + 's';
+            // Show shield status if active
+            const hud = document.getElementById('powerupHud');
+            if (hasShield) {
+                const badge = document.getElementById('powerupBadge');
+                badge.className = 'powerup-badge powerup-shield';
+                document.getElementById('powerupIcon').textContent = '🛡️';
+                document.getElementById('powerupName').textContent = 'Shield';
+                
+                // Show timer for timed power-up if active
+                if (activePowerUp) {
+                    const seconds = Math.ceil(powerUpTimer / 1000);
+                    document.getElementById('powerupTimer').textContent = seconds + 's';
+                    document.getElementById('powerupName').textContent = POWERUP_CONFIG[activePowerUp].name;
+                    document.getElementById('powerupIcon').textContent = POWERUP_CONFIG[activePowerUp].icon;
+                } else {
+                    document.getElementById('powerupTimer').textContent = '';
+                }
+                hud.classList.remove('hidden');
+            } else if (activePowerUp) {
+                const config = POWERUP_CONFIG[activePowerUp];
+                const badge = document.getElementById('powerupBadge');
+                badge.className = 'powerup-badge powerup-' + activePowerUp;
+                document.getElementById('powerupIcon').textContent = config.icon;
+                document.getElementById('powerupName').textContent = config.name;
+                const seconds = Math.ceil(powerUpTimer / 1000);
+                document.getElementById('powerupTimer').textContent = seconds + 's';
+                hud.classList.remove('hidden');
+            } else {
+                hud.classList.add('hidden');
+            }
         }
 
         function render() {
@@ -1149,7 +1174,7 @@
             }
             
             // Shield effect
-            if (activePowerUp === 'shield') {
+            if (hasShield) {
                 ctx.strokeStyle = 'rgba(52, 152, 219, 0.7)';
                 ctx.lineWidth = 4;
                 ctx.beginPath();
