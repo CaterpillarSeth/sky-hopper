@@ -268,6 +268,54 @@
             color: #FF6B6B;
         }
         
+        /* Power-up HUD */
+        .powerup-hud {
+            position: absolute;
+            top: 60px;
+            left: 15px;
+            z-index: 5;
+        }
+        
+        .powerup-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 15px;
+            border-radius: 20px;
+            color: white;
+            font-weight: 700;
+            font-size: 14px;
+            animation: pulse 1s ease-in-out infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        
+        .powerup-jetpack {
+            background: linear-gradient(135deg, #FF6B6B, #F39C12);
+        }
+        
+        .powerup-spring {
+            background: linear-gradient(135deg, #27AE60, #2ECC71);
+        }
+        
+        .powerup-shield {
+            background: linear-gradient(135deg, #3498DB, #5DADE2);
+        }
+        
+        .powerup-icon {
+            font-size: 18px;
+        }
+        
+        .powerup-timer {
+            background: rgba(0,0,0,0.3);
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 12px;
+        }
+        
         /* Touch zones */
         .touch-zones {
             position: absolute;
@@ -325,6 +373,14 @@
             <div class="hud-item">Score: <span id="scoreDisplay">0</span></div>
             <div class="hud-item">Level: <span id="levelDisplay">1</span></div>
             <div class="hud-item hud-lives">❤ <span id="livesDisplay">3</span></div>
+        </div>
+        
+        <div class="powerup-hud hidden" id="powerupHud">
+            <div class="powerup-badge" id="powerupBadge">
+                <span class="powerup-icon" id="powerupIcon"></span>
+                <span id="powerupName"></span>
+                <span class="powerup-timer" id="powerupTimer"></span>
+            </div>
         </div>
         
         <div class="touch-zones hidden" id="touchZones">
@@ -421,6 +477,31 @@
         let keys = { left: false, right: false };
         let animationId;
         let gameCoins = 0;
+        
+        // Power-up State
+        let activePowerUp = null;
+        let powerUpTimer = 0;
+        let jetpackFuel = 0;
+        let jetpackSlowdown = false;
+        
+        // Power-up Config
+        const POWERUP_CONFIG = {
+            jetpack: { duration: 5000, color: '#FF6B6B', icon: '🚀', name: 'Jetpack' },
+            spring: { duration: 10000, color: '#27AE60', icon: '🐸', name: 'Spring' },
+            shield: { duration: 8000, color: '#3498DB', icon: '🛡️', name: 'Shield' }
+        };
+
+        // Power-up Images
+        const powerUpImages = {
+            jetpack: new Image(),
+            spring: new Image(),
+            shield: new Image()
+        };
+
+        // Load power-up images
+        powerUpImages.jetpack.src = 'images/jetpack-icon.png';
+        powerUpImages.spring.src = 'images/spring-icon.png';
+        powerUpImages.shield.src = 'images/shield-icon.png';
 
         // Upgrade Costs
         const UPGRADE_COSTS = {
@@ -581,6 +662,12 @@
             showScreen(null);
             document.getElementById('hud').classList.remove('hidden');
             document.getElementById('touchZones').classList.remove('hidden');
+            document.getElementById('powerupHud').classList.add('hidden');
+            
+            // Reset power-ups
+            activePowerUp = null;
+            powerUpTimer = 0;
+            jetpackFuel = 0;
             
             // Apply upgrades
             const baseJumpPower = CONFIG.JUMP_FORCE - (upgrades.jumpPower * 0.8);
@@ -623,7 +710,8 @@
                 width: basePlatformWidth,
                 height: CONFIG.PLATFORM_HEIGHT,
                 type: 'normal',
-                broken: false
+                broken: false,
+                direction: Math.random() > 0.5 ? 1 : -1
             };
             
             if (animationId) cancelAnimationFrame(animationId);
@@ -642,6 +730,13 @@
                 type = 'breakable';
             }
             
+            // Add power-up (3.5% chance, only on normal/moving platforms)
+            let powerUp = null;
+            if (type !== 'breakable' && Math.random() < 0.035) {
+                const powerTypes = ['jetpack', 'spring', 'shield'];
+                powerUp = powerTypes[Math.floor(Math.random() * powerTypes.length)];
+            }
+            
             return {
                 x: Math.random() * (canvas.width - basePlatformWidth),
                 y: y,
@@ -650,8 +745,7 @@
                 type: type,
                 broken: false,
                 direction: Math.random() > 0.5 ? 1 : -1,
-                moveTimer: 60 + Math.random() * 60,
-                startedMoving: false
+                powerUp: powerUp
             };
         }
 
@@ -673,6 +767,31 @@
             player.y += player.vy;
             player.vy += CONFIG.GRAVITY;
             
+            // Handle active power-up effects
+            if (activePowerUp === 'jetpack') {
+                // Jetpack: fly up automatically for full 5 seconds
+                // Slowdown only happens in last 1-2 seconds (when timer < 2000ms)
+                if (powerUpTimer > 2000) {
+                    // Full thrust for first ~3 seconds
+                    if (jetpackFuel > 0) {
+                        player.vy -= 0.8;
+                        jetpackFuel -= 16;
+                        if (player.vy < -12) player.vy = -12;
+                    }
+                } else {
+                    // Gradual slowdown in last 2 seconds
+                    if (player.vy < -3) {
+                        player.vy *= 0.96; // Gentle slowdown
+                    } else {
+                        player.vy *= 0.92; // Faster slowdown as timer runs out
+                    }
+                }
+            } else if (activePowerUp === 'spring') {
+                // Spring: 2x jump power is handled in bounce
+            } else if (activePowerUp === 'shield') {
+                // Shield: handled in fall death
+            }
+            
             // Screen wrap
             if (player.x + player.width < 0) player.x = canvas.width;
             if (player.x > canvas.width) player.x = -player.width;
@@ -691,24 +810,46 @@
                         
                         if (p.type === 'breakable') {
                             p.broken = true;
-                            // Break animation handled in render
-                        } else if (p.type === 'moving' && !p.startedMoving) {
-                            p.startedMoving = true;
+                            p.breaking = true;
+                            p.breakTimer = 20; // frames to shake before falling
+                            p.vy = 0;
+                            p.vx = 0;
                         }
                         
                         // Bounce
                         const baseJumpPower = CONFIG.JUMP_FORCE - (upgrades.jumpPower * 0.8);
-                        player.vy = baseJumpPower;
+                        // Spring: 2x jump power
+                        player.vy = activePowerUp === 'spring' ? baseJumpPower * 1.8 : baseJumpPower;
+                        
+                        // Collect power-up
+                        if (p.powerUp && !activePowerUp) {
+                            activatePowerUp(p.powerUp);
+                            p.powerUp = null; // Remove power-up from platform
+                        }
                     }
                 });
             }
             
-            // Moving platforms
+            // Moving platforms - always move immediately
             platforms.forEach(p => {
-                if (p.type === 'moving' && p.startedMoving) {
+                if (p.type === 'moving') {
                     p.x += p.direction * 2;
                     if (p.x <= 0 || p.x + p.width >= canvas.width) {
                         p.direction *= -1;
+                    }
+                }
+                
+                // Breakable platform falling animation
+                if (p.breaking) {
+                    if (p.breakTimer > 0) {
+                        // Shake phase
+                        p.breakTimer--;
+                        p.shakeOffset = (Math.random() - 0.5) * 6;
+                    } else {
+                        // Fall phase
+                        p.shakeOffset = 0;
+                        p.vy += CONFIG.GRAVITY;
+                        p.y += p.vy;
                     }
                 }
             });
@@ -733,7 +874,7 @@
                 }
                 
                 // Remove platforms that are off screen and create new ones
-                platforms = platforms.filter(p => p.y < canvas.height + 50);
+                platforms = platforms.filter(p => p.y < canvas.height + 50 && !(p.broken && p.y > canvas.height + 50));
                 
                 while (platforms.length < 15) {
                     const highestPlatform = platforms.reduce((min, p) => p.y < min ? p.y : min, canvas.height);
@@ -743,26 +884,76 @@
             
             // Fall death
             if (player.y > canvas.height + 50) {
-                lives--;
-                if (lives <= 0) {
-                    gameOver();
+                if (activePowerUp === 'shield') {
+                    // Shield: bounce back up instead of losing life
+                    player.y = canvas.height - 100;
+                    player.vy = -15;
+                    deactivatePowerUp();
                 } else {
-                    // Respawn on a platform
-                    player.y = 0;
-                    player.vy = 0;
-                    const safePlatforms = platforms.filter(p => !p.broken && p.y > 100 && p.y < canvas.height - 100);
-                    if (safePlatforms.length > 0) {
-                        const p = safePlatforms[Math.floor(Math.random() * safePlatforms.length)];
-                        player.x = p.x + p.width / 2 - player.width / 2;
-                        player.y = p.y - player.height;
+                    lives--;
+                    if (lives <= 0) {
+                        gameOver();
+                    } else {
+                        // Respawn on a platform
+                        player.y = 0;
+                        player.vy = 0;
+                        const safePlatforms = platforms.filter(p => !p.broken && p.y > 100 && p.y < canvas.height - 100);
+                        if (safePlatforms.length > 0) {
+                            const p = safePlatforms[Math.floor(Math.random() * safePlatforms.length)];
+                            player.x = p.x + p.width / 2 - player.width / 2;
+                            player.y = p.y - player.height;
+                        }
                     }
                 }
+            }
+            
+            // Update power-up timer
+            if (activePowerUp && powerUpTimer > 0) {
+                powerUpTimer -= 16; // ~60fps
+                if (powerUpTimer <= 0) {
+                    deactivatePowerUp();
+                }
+                updatePowerUpHUD();
             }
             
             // Update HUD
             document.getElementById('scoreDisplay').textContent = score;
             document.getElementById('levelDisplay').textContent = level;
             document.getElementById('livesDisplay').textContent = lives;
+        }
+        
+        function activatePowerUp(type) {
+            const config = POWERUP_CONFIG[type];
+            activePowerUp = type;
+            powerUpTimer = config.duration;
+            
+            if (type === 'jetpack') {
+                jetpackFuel = 5000; // Full 5 seconds of thrust
+                jetpackSlowdown = false; // Reset slowdown flag
+            }
+            
+            // Show HUD
+            const badge = document.getElementById('powerupBadge');
+            badge.className = 'powerup-badge powerup-' + type;
+            document.getElementById('powerupIcon').textContent = config.icon;
+            document.getElementById('powerupName').textContent = config.name;
+            document.getElementById('powerupHud').classList.remove('hidden');
+            updatePowerUpHUD();
+        }
+        
+        function deactivatePowerUp() {
+            activePowerUp = null;
+            powerUpTimer = 0;
+            jetpackFuel = 0;
+            jetpackSlowdown = false;
+            const hud = document.getElementById('powerupHud');
+            hud.classList.add('hidden');
+            document.getElementById('powerupTimer').textContent = '';
+        }
+        
+        function updatePowerUpHUD() {
+            const seconds = Math.ceil(powerUpTimer / 1000);
+            document.getElementById('powerupTimer').textContent = seconds + 's';
         }
 
         function render() {
@@ -786,42 +977,48 @@
             
             // Draw platforms
             platforms.forEach(p => {
-                if (p.broken) return;
+                if (p.broken && (!p.breaking || p.y > canvas.height + 100)) return;
+                
+                // Apply shake offset during breaking
+                let drawX = p.x;
+                if (p.breaking && p.breakTimer > 0) {
+                    drawX = p.x + (p.shakeOffset || 0);
+                }
                 
                 // Platform shadow
                 ctx.fillStyle = 'rgba(0,0,0,0.3)';
-                ctx.fillRect(p.x + 3, p.y + 3, p.width, p.height);
+                ctx.fillRect(drawX + 3, p.y + 3, p.width, p.height);
                 
                 if (p.type === 'normal') {
-                    const platGrad = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.height);
+                    const platGrad = ctx.createLinearGradient(drawX, p.y, drawX, p.y + p.height);
                     platGrad.addColorStop(0, '#4ECDC4');
                     platGrad.addColorStop(1, '#2AB7A9');
                     ctx.fillStyle = platGrad;
                 } else if (p.type === 'moving') {
-                    const platGrad = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.height);
+                    const platGrad = ctx.createLinearGradient(drawX, p.y, drawX, p.y + p.height);
                     platGrad.addColorStop(0, '#5DADE2');
                     platGrad.addColorStop(1, '#3498DB');
                     ctx.fillStyle = platGrad;
                 } else if (p.type === 'breakable') {
-                    const platGrad = ctx.createLinearGradient(p.x, p.y, p.x, p.y + p.height);
+                    const platGrad = ctx.createLinearGradient(drawX, p.y, drawX, p.y + p.height);
                     platGrad.addColorStop(0, '#D35400');
                     platGrad.addColorStop(1, '#A04000');
                     ctx.fillStyle = platGrad;
                 }
                 
                 ctx.beginPath();
-                ctx.roundRect(p.x, p.y, p.width, p.height, 5);
+                ctx.roundRect(drawX, p.y, p.width, p.height, 5);
                 ctx.fill();
                 
                 // Platform highlight
                 ctx.fillStyle = 'rgba(255,255,255,0.3)';
-                ctx.fillRect(p.x + 5, p.y + 2, p.width - 10, 3);
+                ctx.fillRect(drawX + 5, p.y + 2, p.width - 10, 3);
                 
                 // Moving platform indicator
                 if (p.type === 'moving') {
                     ctx.fillStyle = 'white';
                     ctx.beginPath();
-                    ctx.arc(p.x + p.width/2, p.y + p.height/2, 3, 0, Math.PI * 2);
+                    ctx.arc(drawX + p.width/2, p.y + p.height/2, 3, 0, Math.PI * 2);
                     ctx.fill();
                 }
                 
@@ -830,11 +1027,34 @@
                     ctx.strokeStyle = 'rgba(0,0,0,0.3)';
                     ctx.lineWidth = 2;
                     ctx.beginPath();
-                    ctx.moveTo(p.x + 10, p.y + 3);
-                    ctx.lineTo(p.x + 20, p.y + p.height - 3);
-                    ctx.moveTo(p.x + 30, p.y + 3);
-                    ctx.lineTo(p.x + 25, p.y + p.height - 3);
+                    ctx.moveTo(drawX + 10, p.y + 3);
+                    ctx.lineTo(drawX + 20, p.y + p.height - 3);
+                    ctx.moveTo(drawX + 30, p.y + 3);
+                    ctx.lineTo(drawX + 25, p.y + p.height - 3);
                     ctx.stroke();
+                }
+                
+                // Draw power-up on platform
+                if (p.powerUp) {
+                    const config = POWERUP_CONFIG[p.powerUp];
+                    const iconX = drawX + p.width / 2;
+                    const iconY = p.y - 15;
+                    
+                    // Draw custom power-up image
+                    const img = powerUpImages[p.powerUp];
+                    if (img && img.complete) {
+                        const imgSize = 24;
+                        ctx.globalAlpha = 1;
+                        ctx.drawImage(img, iconX - imgSize/2, iconY, imgSize, imgSize);
+                    } else {
+                        // Fallback to emoji if image not loaded
+                        ctx.shadowColor = config.color;
+                        ctx.shadowBlur = 10;
+                        ctx.font = '20px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(config.icon, iconX, iconY + 18);
+                        ctx.shadowBlur = 0;
+                    }
                 }
             });
             
@@ -871,6 +1091,55 @@
             ctx.beginPath();
             ctx.roundRect(player.x + 5, player.y + 5, player.width - 15, 8, 3);
             ctx.fill();
+            
+            // Power-up effects on player
+            if (activePowerUp === 'jetpack' && jetpackFuel > 0) {
+                // Jetpack flames
+                ctx.fillStyle = '#FF6B6B';
+                ctx.beginPath();
+                ctx.moveTo(player.x + 8, player.y + player.height);
+                ctx.lineTo(player.x + 12, player.y + player.height + 15);
+                ctx.lineTo(player.x + 16, player.y + player.height);
+                ctx.fill();
+                
+                ctx.fillStyle = '#F39C12';
+                ctx.beginPath();
+                ctx.moveTo(player.x + 12, player.y + player.height);
+                ctx.lineTo(player.x + 14, player.y + player.height + 10);
+                ctx.lineTo(player.x + 16, player.y + player.height);
+                ctx.fill();
+                
+                // More flames for width
+                ctx.fillStyle = '#FF6B6B';
+                ctx.beginPath();
+                ctx.moveTo(player.x + player.width - 8, player.y + player.height);
+                ctx.lineTo(player.x + player.width - 12, player.y + player.height + 15);
+                ctx.lineTo(player.x + player.width - 16, player.y + player.height);
+                ctx.fill();
+                
+                ctx.fillStyle = '#F39C12';
+                ctx.beginPath();
+                ctx.moveTo(player.x + player.width - 12, player.y + player.height);
+                ctx.lineTo(player.x + player.width - 14, player.y + player.height + 10);
+                ctx.lineTo(player.x + player.width - 16, player.y + player.height);
+                ctx.fill();
+            }
+            
+            // Shield effect
+            if (activePowerUp === 'shield') {
+                ctx.strokeStyle = 'rgba(52, 152, 219, 0.7)';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.arc(player.x + player.width/2, player.y + player.height/2, player.width * 0.8, 0, Math.PI * 2);
+                ctx.stroke();
+                
+                // Shield shimmer
+                ctx.strokeStyle = 'rgba(93, 173, 226, 0.5)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(player.x + player.width/2, player.y + player.height/2, player.width * 0.9, 0, Math.PI * 2);
+                ctx.stroke();
+            }
         }
 
         function gameOver() {
