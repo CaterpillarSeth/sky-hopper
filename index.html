@@ -862,8 +862,14 @@
                         player.vy = activePowerUp === 'spring' ? baseJumpPower * 1.8 : baseJumpPower;
                         
                         // Collect power-up
-                        if (p.powerUp && !activePowerUp) {
-                            activatePowerUp(p.powerUp);
+                        if (p.powerUp) {
+                            // Shield can always be collected, even with other power-ups
+                            if (p.powerUp === 'shield') {
+                                activatePowerUp('shield');
+                            } else if (!activePowerUp) {
+                                // Other power-ups only if none active
+                                activatePowerUp(p.powerUp);
+                            }
                             p.powerUp = null; // Remove power-up from platform
                         }
                     }
